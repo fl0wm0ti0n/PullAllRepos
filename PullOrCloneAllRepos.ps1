@@ -1,30 +1,30 @@
 [CmdletBinding()]
 param(
-  # Zielstruktur: GitRepo\<Kategorie>\<Repo>
+  # Target structure: GitRepo\<Category>\<Repo>
   [string]$Root = (Join-Path $HOME 'Documents\GitRepo'),
 
-  # GitHub-Owner (User oder Org). Wenn leer und -Mode enthaelt Clone -> automatisch ermitteln.
+  # GitHub owner (user or org). If empty and -Mode contains Clone -> determine automatically.
   [string]$Owner,
 
-  # Arbeitsmodus: Clone = nur fehlende Repos klonen, Pull = nur lokale Repos updaten, Both = beides
+  # Operation mode: Clone = clone missing repos only, Pull = update local repos only, Both = both
   [ValidateSet('Clone','Pull','Both')][string]$Mode = 'Both',
 
-  # Pull-Optionen
+  # Pull options
   [switch]$ReportOnly,
   [switch]$AutoStash,
   [switch]$NoRebase,
   [switch]$NoFetch,
   [switch]$PullOnlyChanged,
 
-  # Remote-Quellen (nur fuer Clone)
-  [switch]$UseGh,                 # GitHub CLI bevorzugen, wenn vorhanden
-  [switch]$UseHttps,              # statt SSH die HTTPS-URL verwenden
-  [switch]$IncludeForks,          # Forks NICHT ausfiltern
-  [switch]$IncludeArchived,       # Archived NICHT ausfiltern
-  [switch]$CategorizeByLanguage,  # Kategorie = primaryLanguage
-  [switch]$CategorizeByTopic,     # Kategorie = erstes Topic (Vorrang vor Language)
+  # Remote sources (only for Clone)
+  [switch]$UseGh,                 # Prefer GitHub CLI if available
+  [switch]$UseHttps,              # Use HTTPS URL instead of SSH
+  [switch]$IncludeForks,          # Do NOT filter out forks
+  [switch]$IncludeArchived,       # Do NOT filter out archived
+  [switch]$CategorizeByLanguage,  # Category = primaryLanguage
+  [switch]$CategorizeByTopic,     # Category = first topic (priority over language)
 
-  # Hilfe/Syntax
+  # Help/Syntax
   [switch]$ShowSyntax,
   [Alias('Help','?')][switch]$ShowHelp
 )
@@ -32,33 +32,33 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Show-Usage([string]$Reason = $null) {
-  if ($Reason) { Write-Host "`n[Fehler] $Reason" -ForegroundColor Red }
+  if ($Reason) { Write-Host "`n[Error] $Reason" -ForegroundColor Red }
   $lines = @(
-    "================= Hilfe / Syntax =================",
-    "Aufruf:",
-    "  .\PullAll.ps1 [-Root <Pfad>] [-Owner <user|org>] [-Mode Clone|Pull|Both]",
-    "                [-ReportOnly] [-AutoStash] [-NoRebase] [-NoFetch] [-PullOnlyChanged]",
-    "                [-UseGh] [-UseHttps] [-IncludeForks] [-IncludeArchived]",
-    "                [-CategorizeByTopic] [-CategorizeByLanguage] [-ShowSyntax] [-ShowHelp]",
+    "================= Help / Syntax =================",
+    "Usage:",
+    "  .\PullOrCloneAllRepos.ps1 [-Root <path>] [-Owner <user|org>] [-Mode Clone|Pull|Both]",
+    "                            [-ReportOnly] [-AutoStash] [-NoRebase] [-NoFetch] [-PullOnlyChanged]",
+    "                            [-UseGh] [-UseHttps] [-IncludeForks] [-IncludeArchived]",
+    "                            [-CategorizeByTopic] [-CategorizeByLanguage] [-ShowSyntax] [-ShowHelp]",
     "",
-    "Beispiele:",
-    "  .\PullAll.ps1 -Mode Pull                         # nur lokale Repos updaten",
-    "  .\PullAll.ps1 -Mode Clone -CategorizeByTopic     # fehlende Repos nach Topic einsortieren",
-    "  .\PullAll.ps1 -Owner meineOrg -Mode Both         # Org klonen + alles pullen",
-    "  .\PullAll.ps1 -Mode Pull -PullOnlyChanged        # nur wenn behind > 0",
+    "Examples:",
+    "  .\PullOrCloneAllRepos.ps1 -Mode Pull                         # update local repos only",
+    "  .\PullOrCloneAllRepos.ps1 -Mode Clone -CategorizeByTopic     # categorize missing repos by topic",
+    "  .\PullOrCloneAllRepos.ps1 -Owner myOrg -Mode Both            # clone org + pull all",
+    "  .\PullOrCloneAllRepos.ps1 -Mode Pull -PullOnlyChanged        # only when behind > 0",
     "",
-    "Legende (git status --porcelain):",
-    "  XY vor dem Pfad: X = Index (staged), Y = Working Tree (unstaged)",
+    "Legend (git status --porcelain):",
+    "  XY before the path: X = index (staged), Y = working tree (unstaged)",
     "  M=Modified, A=Added, D=Deleted, R=Renamed, C=Copied, ??=Untracked, !!=Ignored",
-    "  Beispiele: ' M file' (geaendert, nicht gestaged) | 'M  file' (gestaged) | '?? file' (untracked)",
+    "  Examples: ' M file' (changed, not staged) | 'M  file' (staged) | '?? file' (untracked)",
     "",
-    "Upstream-Status:",
-    "  ahead N = lokal N Commits mehr (nicht gepusht)",
-    "  behind N = Remote N Commits voraus (lokal aelter)",
-    "  beides >0 = divergiert",
+    "Upstream status:",
+    "  ahead N  = local branch is N commits ahead (not pushed)",
+    "  behind N = remote has N newer commits (local is behind)",
+    "  both >0  = diverged",
     "",
-    "Nuetzliche Befehle:",
-    "  git add <datei> | git restore <datei> | git restore --staged <datei>",
+    "Useful commands:",
+    "  git add <file> | git restore <file> | git restore --staged <file>",
     "  git branch --set-upstream-to origin/<branch>",
     "=================================================="
   )
@@ -66,9 +66,9 @@ function Show-Usage([string]$Reason = $null) {
 }
 
 function Header($t){ Write-Host "`n======== $t ========" -ForegroundColor Cyan }
-function Require-Git { if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git nicht gefunden (git.exe nicht im PATH)." } }
+function Test-GitAvailable { if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git not found (git.exe not in PATH)." } }
 function HasGh { return [bool](Get-Command gh -ErrorAction SilentlyContinue) }
-function Show-SyntaxInfo { Header "Syntax-Info"; Show-Usage }
+function Show-SyntaxInfo { Header "Syntax info"; Show-Usage }
 
 function Get-DefaultOwner {
   if (HasGh) {
@@ -106,12 +106,12 @@ function Show-DirtyDetails($repo){
   return $true
 }
 
-function Pull-ExistingRepo($repoPath){
+function Update-ExistingRepo($repoPath){
   $name = Split-Path $repoPath -Leaf
   Header "$name (pull)"
   if (-not $NoFetch){ git -C $repoPath fetch --all --prune | Out-Null }
   $info = Get-BranchInfo $repoPath
-  $up = $(if ($info.Upstream){ $info.Upstream } else { "(kein Upstream gesetzt)" })
+  $up = $(if ($info.Upstream){ $info.Upstream } else { "(no upstream set)" })
   Write-Host (" Branch:   {0}" -f $info.Branch)
   Write-Host (" Upstream: {0}" -f $up)
   if ($info.Upstream){
@@ -122,12 +122,12 @@ function Pull-ExistingRepo($repoPath){
   if ($ReportOnly){ return }
 
   if ($PullOnlyChanged -and $info.Upstream -and $info.Behind -le 0){
-    Write-Host " Uebersprungen (nicht behind)." -ForegroundColor DarkGray
+    Write-Host " Skipped (not behind)." -ForegroundColor DarkGray
     return
   }
 
   if ($dirty -and -not $AutoStash){
-    Write-Host " Uebersprungen (dirty). Nutze -AutoStash zum automatischen Stashen." -ForegroundColor Yellow
+    Write-Host " Skipped (dirty). Use -AutoStash to stash automatically." -ForegroundColor Yellow
     return
   }
 
@@ -136,36 +136,36 @@ function Pull-ExistingRepo($repoPath){
     $msg = "auto-$(Get-Date -Format 'yyyy-MM-ddTHH-mm-ss')"
     git -C $repoPath stash push -u -m $msg | Out-Null
     $didStash = $true
-    Write-Host " Auto-gestasht: $msg" -ForegroundColor DarkGray
+    Write-Host " Auto-stashed: $msg" -ForegroundColor DarkGray
   }
 
-  $args = @('--all','--prune')
-  if ($NoRebase){ $args = @('--ff-only') + $args } else { $args = @('--rebase','--autostash') + $args }
-  $out = git -C $repoPath pull @args 2>&1
+  $pullArgs = @('--all','--prune')
+  if ($NoRebase){ $pullArgs = @('--ff-only') + $pullArgs } else { $pullArgs = @('--rebase','--autostash') + $pullArgs }
+  $out = git -C $repoPath pull @pullArgs 2>&1
   Write-Host $out
 
   if ($didStash){
     $pop = git -C $repoPath stash pop 2>&1
     if ($LASTEXITCODE -ne 0){
-      Write-Host " Konflikte beim stash pop - bitte manuell loesen." -ForegroundColor Red
+      Write-Host " Conflicts during stash pop - please resolve manually." -ForegroundColor Red
       Write-Host $pop
     } else {
-      Write-Host " Stash wieder eingespielt." -ForegroundColor DarkGray
+      Write-Host " Stash applied." -ForegroundColor DarkGray
     }
   }
 }
 
-function Ensure-Cloned($root, $category, $name, $url){
+function Get-OrCloneRepo($root, $category, $name, $url){
   $catDir = Join-Path $root $category
   $dest   = Join-Path $catDir $name
   if (-not (Test-Path -LiteralPath $catDir)) { New-Item -ItemType Directory -Path $catDir | Out-Null }
 
   if (Test-Path -LiteralPath (Join-Path $dest '.git')) {
-    Write-Host "Repo vorhanden: $dest" -ForegroundColor DarkGray
+    Write-Host "Repo exists: $dest" -ForegroundColor DarkGray
     return $dest
   }
   if (Test-Path -LiteralPath $dest -and -not (Test-Path -LiteralPath (Join-Path $dest '.git'))) {
-    Write-Host "WARNUNG: Ziel existiert, ist aber kein Git-Repo: $dest" -ForegroundColor Yellow
+    Write-Host "WARNING: Target exists but is not a Git repo: $dest" -ForegroundColor Yellow
     return $null
   }
 
@@ -173,13 +173,13 @@ function Ensure-Cloned($root, $category, $name, $url){
   Write-Host " Ziel: $dest"
   Write-Host " URL:  $url"
   if ($ReportOnly){
-    Write-Host " [ReportOnly] - wuerde klonen..." -ForegroundColor DarkGray
+    Write-Host " [ReportOnly] - would clone..." -ForegroundColor DarkGray
     return $null
   }
 
   git clone $url $dest
   if ($LASTEXITCODE -ne 0){
-    Write-Host "Clone fehlgeschlagen fuer $url" -ForegroundColor Red
+    Write-Host "Clone failed for $url" -ForegroundColor Red
     return $null
   }
   return $dest
@@ -196,14 +196,14 @@ function ChooseUrl($repo, [switch]$UseHttps){
 }
 
 function Get-FirstTopic($repo){
-  # GH CLI liefert i.d.R. .topics als Array von Strings (falls angefordert).
-  # REST API liefert .topics ebenfalls (Token kann noetig sein).
+  # GH CLI usually provides .topics as an array of strings (if requested).
+  # REST API also provides .topics (token may be required).
   $topic = $null
   if ($repo.PSObject.Properties.Match('topics').Count -gt 0) {
     $t = $repo.topics
     if ($t -and $t.Count -gt 0) { $topic = [string]$t[0] }
   } elseif ($repo.PSObject.Properties.Match('repositoryTopics').Count -gt 0) {
-    # Fallback-Schema mancher gh-Versionen
+    # Fallback schema used by some gh versions
     $rt = $repo.repositoryTopics
     if ($rt -and $rt.nodes -and $rt.nodes.Count -gt 0) {
       $topic = [string]$rt.nodes[0].topic.name
@@ -226,7 +226,7 @@ function CategoryFor($repo){
 }
 
 function Get-RemoteReposGh($owner){
-  # Versuche, topics gleich mit zu holen; falls nicht verfuegbar, bleibt .topics leer -> Get-FirstTopic faellt auf 'misc'
+  # Try to fetch topics as well; if unavailable, .topics remains empty -> Get-FirstTopic falls back to 'misc'
   $json = gh repo list $owner --limit 1000 --json name,sshUrl,cloneUrl,isArchived,isFork,owner,primaryLanguage,visibility,topics 2>$null
   if (-not $json) { return @() }
   return $json | ConvertFrom-Json
@@ -244,14 +244,14 @@ function Get-RemoteReposApi($owner){
     try {
       $resp = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers
     } catch {
-      throw "GitHub API Fehler: $($_.Exception.Message) (Tipp: gh auth login oder GITHUB_TOKEN setzen)"
+      throw "GitHub API error: $($_.Exception.Message) (Tip: run 'gh auth login' or set GITHUB_TOKEN)"
     }
     if (-not $resp -or $resp.Count -eq 0) { break }
 
     foreach($r in $resp){
       $visibility = "public"
       if ($r.private) { $visibility = "private" }
-      # topics wird i.d.R. mitgeliefert; sonst null -> CategoryFor faellt auf misc
+      # topics are usually included; else null -> CategoryFor falls back to misc
       $obj = [pscustomobject]@{
         name            = $r.name
         sshUrl          = $r.ssh_url
@@ -274,40 +274,40 @@ function Get-RemoteReposApi($owner){
 try {
   if ($ShowHelp) { Show-Usage; return }
 
-  Require-Git
+  Test-GitAvailable
   if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -Path $Root | Out-Null }
 
   if ($ReportOnly -and $PullOnlyChanged) {
-    Show-Usage "Optionen inkompatibel: -ReportOnly kann nicht mit -PullOnlyChanged kombiniert werden."
+    Show-Usage "Incompatible options: -ReportOnly cannot be combined with -PullOnlyChanged."
     return
   }
 
   if ($ShowSyntax) { Show-SyntaxInfo }
 
-  # Owner automatisch bestimmen, wenn fuer Clone benoetigt
+  # Determine owner automatically when needed for Clone
   $needOwner = ($Mode -eq 'Clone' -or $Mode -eq 'Both')
   if ($needOwner -and (-not $Owner)) {
     $auto = Get-DefaultOwner
     if ($auto) {
-      Write-Host "Kein -Owner angegeben - nutze angemeldeten Account: $auto" -ForegroundColor DarkGray
+      Write-Host "No -Owner provided - using authenticated account: $auto" -ForegroundColor DarkGray
       $Owner = $auto
     } else {
-      Show-Usage "Owner wird fuer -Mode $Mode benoetigt und konnte nicht automatisch ermittelt werden."
+      Show-Usage "Owner is required for -Mode $Mode and could not be determined automatically."
       return
     }
   }
 
-  # --- CLONE-PHASE ---
+  # --- CLONE PHASE ---
   if ($Mode -eq 'Clone' -or $Mode -eq 'Both') {
     $remoteRepos = @()
     if ($UseGh -or (HasGh)) {
-      try { $remoteRepos = Get-RemoteReposGh $Owner } catch { Write-Host "gh-Abfrage fehlgeschlagen, versuche API ..." -ForegroundColor Yellow }
+      try { $remoteRepos = Get-RemoteReposGh $Owner } catch { Write-Host "gh query failed, trying API ..." -ForegroundColor Yellow }
     }
     if (-not $remoteRepos -or $remoteRepos.Count -eq 0) {
       $remoteRepos = Get-RemoteReposApi $Owner
     }
     if (-not $remoteRepos -or $remoteRepos.Count -eq 0) {
-      throw "Keine Remote-Repos fuer '$Owner' gefunden (Rechte/Sichtbarkeit pruefen)."
+      throw "No remote repos found for '$Owner' (check permissions/visibility)."
     }
 
     $filtered = $remoteRepos | Where-Object {
@@ -315,30 +315,30 @@ try {
       ($IncludeArchived -or (-not $_.isArchived))
     }
     if (-not $filtered -or $filtered.Count -eq 0) {
-      Write-Host "Nach Filter keine Repos uebrig (Forks/Archived?)." -ForegroundColor Yellow
+      Write-Host "No repos left after filtering (forks/archived?)." -ForegroundColor Yellow
     } else {
       foreach($r in $filtered){
         $cat  = CategoryFor $r
         $url  = ChooseUrl $r -UseHttps:$UseHttps
         $name = $r.name
-        $dest = Ensure-Cloned -root $Root -category $cat -name $name -url $url
+        $dest = Get-OrCloneRepo -root $Root -category $cat -name $name -url $url
         if ($Mode -eq 'Both' -and $dest) {
-          Pull-ExistingRepo -repoPath $dest
+          Update-ExistingRepo -repoPath $dest
         }
       }
     }
   }
 
-  # --- PULL-PHASE (alle lokalen unter Root) ---
+  # --- PULL PHASE (all local repos under Root) ---
   if ($Mode -eq 'Pull') {
     $gitDirs = Get-ChildItem -Path $Root -Recurse -Directory -Filter .git -ErrorAction SilentlyContinue
-    if (-not $gitDirs) { Show-Usage "Keine Repos unter $Root gefunden."; return }
+    if (-not $gitDirs) { Show-Usage "No repos found under $Root."; return }
     foreach($g in $gitDirs) {
-      Pull-ExistingRepo -repoPath $g.Parent.FullName
+      Update-ExistingRepo -repoPath $g.Parent.FullName
     }
   }
 
-  Write-Host "`nFertig." -ForegroundColor Cyan
+  Write-Host "`nDone." -ForegroundColor Cyan
 }
 catch {
   Show-Usage $_.Exception.Message
